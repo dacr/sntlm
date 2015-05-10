@@ -7,6 +7,8 @@ import java.net.InetSocketAddress
 import akka.io.{ IO, Tcp }
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net._
+import com.ning.http.client._
 
 
 /* ---------------------------------------------------------------------------------------------------------- */
@@ -78,15 +80,89 @@ class ProxyHandler(remote:InetSocketAddress, local:InetSocketAddress) extends Ac
   def receive = {
     case Received(data) =>
       logger.debug(s"Received DATA from ${remote.getHostString}:${remote.getPort}")
-      println(data.decodeString("US-ASCII"))
-      sender() ! Write(ByteString(fakeResponse(), "US-ASCII"))
-      //sender() ! Close
+      //println(data.decodeString("US-ASCII"))
+      //sender() ! Write(ByteString(fakeResponse(), "US-ASCII"))
+      val proxy = context.actorOf(ProxyClient.props(data, self))
+      context.become(gateway(proxy))
     case PeerClosed => context stop self
   }
   
-  
+  def gateway(proxy:ActorRef):Receive = {
+    case Received(data) => proxy ! ProxyOutgoing(data)
+    case ProxyIncoming(data) => sender() ! Write(data)
+    case PeerClosed => proxy ! ProxyClose
+    case ProxyClosed => context stop self
+    case Connected(remote,local) => // Connected to the proxy
+  }
 }
 
+/* ---------------------------------------------------------------------------------------------------------- */
+case class ProxyOutgoing(data:ByteString) 
+case class ProxyIncoming(data:ByteString)
+case class ProxyClose()
+case class ProxyClosed()
+/* ---------------------------------------------------------------------------------------------------------- */
+
+object ProxyClient {
+  def props(firstRequestData: ByteString, replies: ActorRef) =
+    Props(classOf[ProxyClient], firstRequestData, replies)
+}
+ 
+class ProxyClient(initialRequestData: ByteString, listener: ActorRef) extends Actor {
+  val logger = LoggerFactory.getLogger("ProxyClient")
+
+  def remasteredInitialRequest(data:ByteString):ByteString = {
+    data.indexOf("\n\n")
+    ByteString("")
+  }
+  
+  val port = 3128
+  val dest = InetAddress.getByName("localhost")
+  val remote = new InetSocketAddress(dest, port)  
+  
+  val hcf:AsyncHttpClientConfig = {  
+    val builder = new AsyncHttpClientConfig.Builder()
+    builder.setProxyServer(new ProxyServer("127.0.0.1", 3128)).build()
+  }
+  val hc = new AsyncHttpClient(hcf)
+  
+  hc.prepareGet("...")
+  
+  hc.
+  
+  
+  import Tcp._
+  import context.system
+  logger.debug("connection to proxy")
+  IO(Tcp) ! Connect(remote)
+ 
+  def receive = {
+    case CommandFailed(_: Connect) =>
+      listener ! "connect failed"
+      context stop self
+ 
+    case c @ Connected(remote, local) =>
+      logger.debug("connected to proxy")
+      listener ! c
+      val connection = sender()
+      connection ! Write(remasteredInitialRequest(initialRequestData))
+      connection ! Register(self)
+      context become {
+        case ProxyOutgoing(data) =>
+          connection ! Write(data)
+        case CommandFailed(w: Write) =>
+          logger.error("Write CommandFailed !")
+          listener ! "write failed"
+        case Received(data) =>
+          listener ! ProxyIncoming(data)
+        case ProxyClose =>
+          connection ! Close
+        case _: ConnectionClosed =>
+          listener ! ProxyClosed
+          context stop self
+      }
+  }
+}
 
 /* ---------------------------------------------------------------------------------------------------------- */
 

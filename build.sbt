@@ -11,10 +11,10 @@ mainClass in assembly := Some("sntlm.Main")
 jarName in assembly := "sntlm.jar"
 
 libraryDependencies ++= Seq(
-  "org.apache.httpcomponents" % "httpclient" % "4.4.1",
-  "com.github.scopt"  %% "scopt"          % "3.3.0",
-  "com.typesafe.akka" %% "akka-actor"     % "2.3.10",
-  "ch.qos.logback"    % "logback-classic" % "1.1.3"
+  "com.ning"           % "async-http-client" % "1.9.22",
+  "com.github.scopt"  %% "scopt"             % "3.3.0",
+  "com.typesafe.akka" %% "akka-actor"        % "2.3.10",
+  "ch.qos.logback"     % "logback-classic"   % "1.1.3"
 )
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.+" % "test"
