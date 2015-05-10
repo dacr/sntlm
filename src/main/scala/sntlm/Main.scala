@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory
 import java.net._
 import com.ning.http.client._
 
-
 /* ---------------------------------------------------------------------------------------------------------- */
 
 object Server {
@@ -111,56 +110,51 @@ object ProxyClient {
 class ProxyClient(initialRequestData: ByteString, listener: ActorRef) extends Actor {
   val logger = LoggerFactory.getLogger("ProxyClient")
 
+  val httpRequestSplitRE="""\r?\n\r?\n""".r
   def remasteredInitialRequest(data:ByteString):ByteString = {
-    data.indexOf("\n\n")
+    val rq = data.decodeString("US-ASCII")
+    val m = httpRequestSplitRE.findFirstMatchIn(rq)
+    logger.debug("Received request :\n"+rq)
+    val justTheRequest = {
+      val idx = m.map(_.start).getOrElse(rq.indexOf('\n'))
+      val (begin,content) = rq.splitAt(idx)
+      begin
+    }
+    val lines = justTheRequest.split("""\r?\n""")
+    val requestLine = lines.head
+    val requestHeaders = lines.tail.toList
+    logger.debug("request line : "+requestLine)
+    
     ByteString("")
   }
   
-  val port = 3128
-  val dest = InetAddress.getByName("localhost")
-  val remote = new InetSocketAddress(dest, port)  
-  
-  val hcf:AsyncHttpClientConfig = {  
+  val hcf:AsyncHttpClientConfig = {
     val builder = new AsyncHttpClientConfig.Builder()
-    builder.setProxyServer(new ProxyServer("127.0.0.1", 3128)).build()
+    builder.setProxyServer(new ProxyServer("127.0.0.1", 3128))
+    builder.setAllowPoolingConnections(false)
+    
+    val realm =
+      new Realm
+         .RealmBuilder()
+         .setPrincipal("me")
+         .setPassword("pass")
+         .setNtlmDomain("AD")
+         .setNtlmHost("EB-XXXXX")
+         .setUsePreemptiveAuth(true)
+         .setScheme(Realm.AuthScheme.NTLM)
+         .build()
+    
+    builder.setRealm(realm)
+    builder.build()
   }
   val hc = new AsyncHttpClient(hcf)
   
-  hc.prepareGet("...")
+  remasteredInitialRequest(initialRequestData)
   
-  hc.
-  
-  
-  import Tcp._
-  import context.system
-  logger.debug("connection to proxy")
-  IO(Tcp) ! Connect(remote)
- 
   def receive = {
-    case CommandFailed(_: Connect) =>
+    case _ =>
       listener ! "connect failed"
       context stop self
- 
-    case c @ Connected(remote, local) =>
-      logger.debug("connected to proxy")
-      listener ! c
-      val connection = sender()
-      connection ! Write(remasteredInitialRequest(initialRequestData))
-      connection ! Register(self)
-      context become {
-        case ProxyOutgoing(data) =>
-          connection ! Write(data)
-        case CommandFailed(w: Write) =>
-          logger.error("Write CommandFailed !")
-          listener ! "write failed"
-        case Received(data) =>
-          listener ! ProxyIncoming(data)
-        case ProxyClose =>
-          connection ! Close
-        case _: ConnectionClosed =>
-          listener ! ProxyClosed
-          context stop self
-      }
   }
 }
 
